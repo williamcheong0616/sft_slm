@@ -18,10 +18,9 @@ from transformers import (
     Gemma3ForConditionalGeneration,
     AutoProcessor,
     BitsAndBytesConfig,
-    TrainingArguments,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 # =============================================================================
 # DEFAULTS
@@ -120,7 +119,7 @@ def train(args):
     })
     print(f"📂 Train: {len(dataset['train'])} | Eval: {len(dataset['eval'])}")
 
-    training_args = TrainingArguments(
+    sft_config = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
@@ -142,17 +141,17 @@ def train(args):
         max_grad_norm=0.3,
         report_to="wandb",
         run_name="gemma-sealion-4b-qlora",
+        max_seq_length=max_seq,
+        packing=True,
     )
 
     trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        args=sft_config,
         train_dataset=dataset["train"],
         eval_dataset=dataset["eval"],
         processing_class=tokenizer,
         formatting_func=make_formatting_func(tokenizer),
-        max_seq_length=max_seq,
-        packing=True,
     )
 
     print(f"\n🚀 QLoRA Training — Gemma-SEA-LION-v4-4B-VL")
