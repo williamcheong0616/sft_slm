@@ -149,7 +149,7 @@ def train(args):
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["eval"],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         formatting_func=make_formatting_func(tokenizer),
         max_seq_length=max_seq,
         packing=True,
