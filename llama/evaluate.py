@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Evaluate fine-tuned Llama-SEA-LION-v3.5-8B-R.
+Evaluate fine-tuned Llama-SEA-LION-v3.5-8B-R (full SFT).
 
 Usage:
   python llama/evaluate.py
@@ -13,19 +13,16 @@ import time
 import torch
 from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
 
-MODEL_ID = "aisingapore/Llama-SEA-LION-v3.5-8B-R"
-ADAPTER_PATH = "./output/llama-8b/final"
+MODEL_PATH = "./output/llama-8b/final"
 
 
-def load_model(adapter_path):
-    print(f"🔄 Loading {MODEL_ID} + adapter...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    base_model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
+def load_model(model_path):
+    print(f"🔄 Loading fine-tuned model: {model_path}")
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path, torch_dtype=torch.bfloat16, device_map="auto",
     )
-    model = PeftModel.from_pretrained(base_model, adapter_path)
     model.eval()
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -61,12 +58,12 @@ def extract(example):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval-file", default="./data/eval.jsonl")
-    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--model-path", default=MODEL_PATH)
     parser.add_argument("--num-samples", type=int, default=50)
     parser.add_argument("--output-file", "-o")
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.adapter_path)
+    model, tokenizer = load_model(args.model_path)
     path = Path(args.eval_file)
     if not path.exists():
         print(f"❌ Not found: {args.eval_file}")

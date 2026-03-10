@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Evaluate fine-tuned Qwen-SEA-LION-v4-8B-VL.
+Evaluate fine-tuned Qwen-SEA-LION-v4-8B-VL (full SFT).
 
 Usage:
   python qwen/evaluate.py
@@ -13,20 +13,17 @@ import time
 import torch
 from pathlib import Path
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
-from peft import PeftModel
 
-MODEL_ID = "aisingapore/Qwen-SEA-LION-v4-8B-VL"
-ADAPTER_PATH = "./output/qwen-8b/final"
+MODEL_PATH = "./output/qwen-8b/final"
 
 
-def load_model(adapter_path):
-    print(f"🔄 Loading {MODEL_ID} + adapter...")
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+def load_model(model_path):
+    print(f"🔄 Loading fine-tuned model: {model_path}")
+    processor = AutoProcessor.from_pretrained(model_path)
     tokenizer = processor.tokenizer
-    base_model = Qwen3VLForConditionalGeneration.from_pretrained(
-        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_path, torch_dtype=torch.bfloat16, device_map="auto",
     )
-    model = PeftModel.from_pretrained(base_model, adapter_path)
     model.eval()
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -62,12 +59,12 @@ def extract(example):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval-file", default="./data/eval.jsonl")
-    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--model-path", default=MODEL_PATH)
     parser.add_argument("--num-samples", type=int, default=50)
     parser.add_argument("--output-file", "-o")
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.adapter_path)
+    model, tokenizer = load_model(args.model_path)
     path = Path(args.eval_file)
     if not path.exists():
         print(f"❌ Not found: {args.eval_file}")

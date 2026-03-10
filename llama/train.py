@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-QLoRA fine-tuning for Llama-SEA-LION-v3.5-8B-R.
+Full SFT for Llama-SEA-LION-v3.5-8B-R.
 
 Model:  aisingapore/Llama-SEA-LION-v3.5-8B-R
 Arch:   Llama 3.1 (decoder, 8B params, 128K context)
-Base:   aisingapore/Llama-SEA-LION-v3-8B (continued pre-train of Llama 3.1)
+Note:   Full fine-tuning — all parameters are trained (no LoRA).
+        Requires ~60GB+ VRAM in bf16. Use DeepSpeed or FSDP for multi-GPU.
 
 Usage:
-  python llama/train.py --no-wandb
-  python llama/train.py --epochs 5 --lr 1e-4 --batch-size 1
+  python llama/train.py
+  python llama/train.py --epochs 2 --lr 2e-5 --batch-size 1
+  accelerate launch llama/train.py --epochs 1
 """
 
 import argparse
@@ -17,10 +19,8 @@ from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
     TrainingArguments,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer
 
 # =============================================================================
@@ -29,30 +29,19 @@ from trl import SFTTrainer
 MODEL_ID = "aisingapore/Llama-SEA-LION-v3.5-8B-R"
 OUTPUT_DIR = "./output/llama-8b"
 DATA_DIR = "./data"
-MAX_SEQ_LENGTH = 8192
-EPOCHS = 3
-BATCH_SIZE = 2
-GRADIENT_ACCUMULATION = 4
-LEARNING_RATE = 2e-4
-LORA_RANK = 16
-LORA_ALPHA = 32
-LORA_DROPOUT = 0.05
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+MAX_SEQ_LENGTH = 512          # Your data is short (~76 words avg), no need for more
+EPOCHS = 1                    # 103K examples — 1 epoch is a good start
+BATCH_SIZE = 4
+GRADIENT_ACCUMULATION = 4     # Effective batch = 4 * 4 = 16
+LEARNING_RATE = 2e-5          # Lower LR for full fine-tuning (vs 2e-4 for LoRA)
 
 
 def load_model_and_tokenizer():
-    """Load Llama-SEA-LION in 4-bit."""
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-    )
-
-    print(f"🔄 Loading model: {MODEL_ID}")
+    """Load Llama-SEA-LION in bf16 for full fine-tuning."""
+    print(f"🔄 Loading model: {MODEL_ID} (bf16, full parameters)")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        quantization_config=bnb_config,
+        torch_dtype=torch.bfloat16,
         device_map="auto",
     )
 
@@ -61,6 +50,11 @@ def load_model_and_tokenizer():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"   Total params:     {total_params / 1e9:.2f}B")
+    print(f"   Trainable params: {trainable / 1e9:.2f}B (100%)")
 
     return model, tokenizer
 
@@ -89,8 +83,6 @@ def train(args):
     epochs = args.epochs or EPOCHS
     lr = args.lr or LEARNING_RATE
     batch_size = args.batch_size or BATCH_SIZE
-    lora_rank = args.lora_rank or LORA_RANK
-    lora_alpha = (args.lora_rank * 2) if args.lora_rank else LORA_ALPHA
     output_dir = args.output_dir or OUTPUT_DIR
     data_dir = args.data_dir or DATA_DIR
     max_seq = args.max_seq_length or MAX_SEQ_LENGTH
@@ -98,30 +90,17 @@ def train(args):
     # 1. Load model
     model, tokenizer = load_model_and_tokenizer()
 
-    # 2. Prepare for QLoRA
-    model = prepare_model_for_kbit_training(model)
+    # 2. Enable gradient checkpointing to save VRAM
     model.gradient_checkpointing_enable()
-
-    peft_config = LoraConfig(
-        r=lora_rank,
-        lora_alpha=lora_alpha,
-        lora_dropout=LORA_DROPOUT,
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=TARGET_MODULES,
-    )
-    model = get_peft_model(model, peft_config)
-    print("\n📊 Trainable parameters:")
-    model.print_trainable_parameters()
 
     # 3. Load dataset
     dataset = load_dataset("json", data_files={
         "train": f"{data_dir}/train.jsonl",
         "eval": f"{data_dir}/eval.jsonl",
     })
-    print(f"📂 Train: {len(dataset['train'])} | Eval: {len(dataset['eval'])}")
+    print(f"\n📂 Train: {len(dataset['train'])} | Eval: {len(dataset['eval'])}")
 
-    # 4. Train
+    # 4. Training config
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epochs,
@@ -134,18 +113,19 @@ def train(args):
         lr_scheduler_type="cosine",
         logging_steps=10,
         save_strategy="steps",
-        save_steps=100,
+        save_steps=500,
         eval_strategy="steps",
-        eval_steps=100,
+        eval_steps=500,
         save_total_limit=3,
         bf16=True,
-        optim="paged_adamw_8bit",
+        optim="adamw_torch",
         gradient_checkpointing=True,
-        max_grad_norm=0.3,
-        report_to="none" if args.no_wandb else "wandb",
+        max_grad_norm=1.0,
+        report_to="wandb",
         run_name="llama-sealion-8b-sft",
     )
 
+    # 5. Create trainer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
@@ -157,10 +137,20 @@ def train(args):
         packing=True,
     )
 
-    print(f"\n🚀 Training Llama-SEA-LION-v3.5-8B-R")
-    print(f"   Epochs: {epochs} | Batch: {batch_size} | LR: {lr} | LoRA rank: {lora_rank}")
+    print(f"\n🚀 Full SFT — Llama-SEA-LION-v3.5-8B-R")
+    print(f"   Epochs:          {epochs}")
+    print(f"   Batch size:      {batch_size}")
+    print(f"   Grad accum:      {GRADIENT_ACCUMULATION}")
+    print(f"   Effective batch: {batch_size * GRADIENT_ACCUMULATION}")
+    print(f"   Learning rate:   {lr}")
+    print(f"   Max seq length:  {max_seq}")
+    print(f"   Output:          {output_dir}")
+    print(f"   WandB:           ✅ enabled")
+    print()
+
     trainer.train()
 
+    # 6. Save
     final_path = f"{output_dir}/final"
     trainer.save_model(final_path)
     tokenizer.save_pretrained(final_path)
@@ -168,15 +158,13 @@ def train(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune Llama-SEA-LION-v3.5-8B-R")
+    parser = argparse.ArgumentParser(description="Full SFT for Llama-SEA-LION-v3.5-8B-R")
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--lr", type=float)
     parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--lora-rank", type=int)
     parser.add_argument("--max-seq-length", type=int)
     parser.add_argument("--data-dir", type=str)
     parser.add_argument("--output-dir", type=str)
-    parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
     train(args)
 

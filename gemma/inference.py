@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Inference with fine-tuned Gemma-SEA-LION-v4-4B-VL.
+Inference with fine-tuned Gemma-SEA-LION-v4-4B-VL (full SFT).
 
 Usage:
   python gemma/inference.py --prompt "Explain what SEALion is"
@@ -10,21 +10,17 @@ Usage:
 import argparse
 import torch
 from transformers import Gemma3ForConditionalGeneration, AutoProcessor
-from peft import PeftModel
 
-MODEL_ID = "aisingapore/Gemma-SEA-LION-v4-4B-VL"
-ADAPTER_PATH = "./output/gemma-4b/final"
+MODEL_PATH = "./output/gemma-4b/final"
 
 
-def load_model(adapter_path: str):
-    print(f"🔄 Loading {MODEL_ID} + adapter...")
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+def load_model(model_path):
+    print(f"🔄 Loading fine-tuned model: {model_path}")
+    processor = AutoProcessor.from_pretrained(model_path)
     tokenizer = processor.tokenizer
-
-    base_model = Gemma3ForConditionalGeneration.from_pretrained(
-        MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
+    model = Gemma3ForConditionalGeneration.from_pretrained(
+        model_path, torch_dtype=torch.bfloat16, device_map="auto",
     )
-    model = PeftModel.from_pretrained(base_model, adapter_path)
     model.eval()
 
     if tokenizer.pad_token is None:
@@ -78,12 +74,12 @@ def main():
     parser.add_argument("--prompt", "-p", type=str)
     parser.add_argument("--input", "-i", type=str, default="")
     parser.add_argument("--interactive", action="store_true")
-    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--model-path", default=MODEL_PATH)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.adapter_path)
+    model, tokenizer = load_model(args.model_path)
 
     if args.interactive:
         interactive(model, tokenizer)
