@@ -1,0 +1,37 @@
+# Training outputs
+output/
+sealion-7b-merged/
+sealion-7b-finetuned/
+
+# Data (keep samples, ignore generated splits)
+data/train.jsonl
+data/eval.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+sft_env/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Weights & Biases
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/
+curated_data.jsonl

@@ -1,0 +1,5 @@
+{"instruction": "What is the capital of Singapore?", "output": "Singapore is a city-state, so the capital of Singapore is Singapore itself."}
+{"instruction": "Translate 'Good morning' to Bahasa Melayu.", "output": "Selamat pagi"}
+{"instruction": "Explain photosynthesis in one sentence.", "output": "Photosynthesis is the process by which green plants convert sunlight, water, and carbon dioxide into glucose and oxygen."}
+{"instruction": "Classify the sentiment of this review.", "input": "The food was amazing but the service was quite slow.", "output": "Mixed — positive sentiment towards food quality, negative sentiment towards service speed."}
+{"instruction": "List three benefits of regular exercise.", "output": "1. Improved cardiovascular health and reduced risk of heart disease.\n2. Better mental health, including reduced anxiety and depression.\n3. Increased energy levels and improved sleep quality."}
