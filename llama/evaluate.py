@@ -1,101 +1,92 @@
 #!/usr/bin/env python3
-"""
-Evaluate fine-tuned Llama-SEA-LION-v3.5-8B-R (full SFT).
+"""Evaluate QLoRA fine-tuned Llama-SEA-LION-v3.5-8B-R."""
 
-Usage:
-  python llama/evaluate.py
-  python llama/evaluate.py --eval-file data/eval.jsonl --num-samples 100
-"""
-
-import argparse
-import json
-import time
-import torch
+import argparse, json, time, torch
 from pathlib import Path
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import PeftModel
 
-MODEL_PATH = "./output/llama-8b/final"
+BASE_MODEL_ID = "aisingapore/Llama-SEA-LION-v3.5-8B-R"
+ADAPTER_PATH = "./output/llama-8b/final"
 
 
-def load_model(model_path):
-    print(f"🔄 Loading fine-tuned model: {model_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.bfloat16, device_map="auto",
+def load_model(adapter_path, base_model_id):
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
     )
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_id, quantization_config=bnb_config, device_map="auto",
+    )
+    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+    model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return model, tokenizer
 
 
-def generate_response(model, tokenizer, instruction, input_ctx=""):
-    messages = [{"role": "user", "content": instruction + (
-        f"\n\n{input_ctx}" if input_ctx else ""
-    )}]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+def gen(model, tokenizer, instr, ctx=""):
+    msgs = [{"role": "user", "content": instr + (f"\n\n{ctx}" if ctx else "")}]
+    prompt = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.1, top_p=0.9, do_sample=True)
-    return tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        out = model.generate(**inputs, max_new_tokens=512, temperature=0.1, top_p=0.9, do_sample=True)
+    return tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
 
-def extract(example):
-    if "messages" in example:
+def extract(ex):
+    if "messages" in ex:
         instr, exp = "", ""
-        for m in example["messages"]:
+        for m in ex["messages"]:
             c = m["content"]
             if isinstance(c, list):
                 c = " ".join(x.get("text", "") for x in c if x.get("type") == "text")
-            if m["role"] == "user":
-                instr = c
-            elif m["role"] == "assistant":
-                exp = c
+            if m["role"] == "user": instr = c
+            elif m["role"] == "assistant": exp = c
         return instr, "", exp
-    return example.get("instruction", ""), example.get("input", ""), example.get("output", "")
+    return ex.get("instruction", ""), ex.get("input", ""), ex.get("output", "")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval-file", default="./data/eval.jsonl")
-    parser.add_argument("--model-path", default=MODEL_PATH)
+    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--base-model", default=BASE_MODEL_ID)
     parser.add_argument("--num-samples", type=int, default=50)
     parser.add_argument("--output-file", "-o")
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.model_path)
+    print(f"🔄 Loading model + adapter...")
+    model, tokenizer = load_model(args.adapter_path, args.base_model)
+
     path = Path(args.eval_file)
     if not path.exists():
-        print(f"❌ Not found: {args.eval_file}")
-        return
+        print(f"❌ Not found: {args.eval_file}"); return
 
-    with open(path, "r") as f:
+    with open(path) as f:
         examples = [json.loads(l) for l in f if l.strip()][:args.num_samples]
 
-    results = []
-    t0 = time.time()
+    results, t0 = [], time.time()
     for i, ex in enumerate(examples):
         instr, ctx, expected = extract(ex)
-        if not instr:
-            continue
-        generated = generate_response(model, tokenizer, instr, ctx)
+        if not instr: continue
+        generated = gen(model, tokenizer, instr, ctx)
         results.append({"instruction": instr, "expected": expected, "generated": generated,
                         "exact_match": expected.strip().lower() == generated.strip().lower()})
-        if (i + 1) % 10 == 0:
-            print(f"  [{i+1}/{len(examples)}]")
+        if (i + 1) % 10 == 0: print(f"  [{i+1}/{len(examples)}]")
 
     elapsed = time.time() - t0
     matches = sum(1 for r in results if r["exact_match"])
     overlaps = []
     for r in results:
         ref = set(r["expected"].lower().split())
-        if ref:
-            overlaps.append(len(set(r["generated"].lower().split()) & ref) / len(ref))
+        if ref: overlaps.append(len(set(r["generated"].lower().split()) & ref) / len(ref))
 
     print(f"\n{'='*60}")
-    print(f"📊 Llama-SEA-LION-v3.5-8B-R — {len(results)} examples, {elapsed:.1f}s")
-    print(f"   Exact match: {matches}/{len(results)} ({matches/len(results):.1%})")
-    print(f"   Token overlap: {sum(overlaps)/len(overlaps):.1%}" if overlaps else "")
+    print(f"📊 Llama-SEA-LION — {len(results)} examples, {elapsed:.1f}s")
+    print(f"   Exact match:   {matches}/{len(results)} ({matches/len(results):.1%})")
+    if overlaps: print(f"   Token overlap:  {sum(overlaps)/len(overlaps):.1%}")
     for r in results[:5]:
         icon = "✅" if r["exact_match"] else "❌"
         print(f"\n  {icon} {r['instruction'][:80]}")

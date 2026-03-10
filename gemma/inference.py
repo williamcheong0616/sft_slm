@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Inference with fine-tuned Gemma-SEA-LION-v4-4B-VL (full SFT).
+Inference with QLoRA fine-tuned Gemma-SEA-LION-v4-4B-VL.
 
 Usage:
   python gemma/inference.py --prompt "Explain what SEALion is"
@@ -9,18 +9,27 @@ Usage:
 
 import argparse
 import torch
-from transformers import Gemma3ForConditionalGeneration, AutoProcessor
+from transformers import Gemma3ForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
+from peft import PeftModel
 
-MODEL_PATH = "./output/gemma-4b/final"
+BASE_MODEL_ID = "aisingapore/Gemma-SEA-LION-v4-4B-VL"
+ADAPTER_PATH = "./output/gemma-4b/final"
 
 
-def load_model(model_path):
-    print(f"🔄 Loading fine-tuned model: {model_path}")
-    processor = AutoProcessor.from_pretrained(model_path)
-    tokenizer = processor.tokenizer
-    model = Gemma3ForConditionalGeneration.from_pretrained(
-        model_path, torch_dtype=torch.bfloat16, device_map="auto",
+def load_model(adapter_path, base_model_id):
+    print(f"🔄 Loading base model: {base_model_id}")
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
     )
+    model = Gemma3ForConditionalGeneration.from_pretrained(
+        base_model_id, quantization_config=bnb_config, device_map="auto",
+    )
+    processor = AutoProcessor.from_pretrained(base_model_id)
+    tokenizer = processor.tokenizer
+
+    print(f"🔗 Loading adapter: {adapter_path}")
+    model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
 
     if tokenizer.pad_token is None:
@@ -35,12 +44,8 @@ def generate(model, tokenizer, instruction, input_ctx="",
     messages = [{"role": "user", "content": instruction + (
         f"\n\n{input_ctx}" if input_ctx else ""
     )}]
-
-    prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True,
-    )
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
     with torch.no_grad():
         outputs = model.generate(
             **inputs, max_new_tokens=max_new_tokens,
@@ -74,12 +79,13 @@ def main():
     parser.add_argument("--prompt", "-p", type=str)
     parser.add_argument("--input", "-i", type=str, default="")
     parser.add_argument("--interactive", action="store_true")
-    parser.add_argument("--model-path", default=MODEL_PATH)
+    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--base-model", default=BASE_MODEL_ID)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.model_path)
+    model, tokenizer = load_model(args.adapter_path, args.base_model)
 
     if args.interactive:
         interactive(model, tokenizer)

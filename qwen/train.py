@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Full SFT for Qwen-SEA-LION-v4-8B-VL.
+QLoRA fine-tuning for Qwen-SEA-LION-v4-8B-VL.
 
 Model:  aisingapore/Qwen-SEA-LION-v4-8B-VL
-Arch:   Qwen3-VL (decoder, 8B params, 256K context)
-Note:   Full fine-tuning — all parameters are trained (no LoRA).
-        Requires ~60GB+ VRAM in bf16. Use DeepSpeed or FSDP for multi-GPU.
+Arch:   Qwen3-VL (8B params)
+VRAM:   ~10-14 GB with QLoRA (fits RTX 3090 24GB)
 
 Usage:
   python qwen/train.py
-  python qwen/train.py --epochs 2 --lr 2e-5 --batch-size 1
+  python qwen/train.py --epochs 2 --lr 1e-4 --batch-size 1
 """
 
 import argparse
@@ -18,8 +17,10 @@ from datasets import load_dataset
 from transformers import (
     Qwen3VLForConditionalGeneration,
     AutoProcessor,
+    BitsAndBytesConfig,
     TrainingArguments,
 )
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer
 
 # =============================================================================
@@ -30,17 +31,28 @@ OUTPUT_DIR = "./output/qwen-8b"
 DATA_DIR = "./data"
 MAX_SEQ_LENGTH = 512
 EPOCHS = 1
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 4
-LEARNING_RATE = 2e-5
+BATCH_SIZE = 2
+GRADIENT_ACCUMULATION = 8     # Effective batch = 2 * 8 = 16
+LEARNING_RATE = 2e-4
+LORA_RANK = 16
+LORA_ALPHA = 32
+LORA_DROPOUT = 0.05
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 
 def load_model_and_tokenizer():
-    """Load Qwen-SEA-LION in bf16 for full fine-tuning."""
-    print(f"🔄 Loading model: {MODEL_ID} (bf16, full parameters)")
+    """Load model in 4-bit quantization for QLoRA."""
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+    print(f"🔄 Loading model: {MODEL_ID} (4-bit QLoRA)")
     model = Qwen3VLForConditionalGeneration.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        quantization_config=bnb_config,
         device_map="auto",
     )
 
@@ -50,11 +62,6 @@ def load_model_and_tokenizer():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
-
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"   Total params:     {total_params / 1e9:.2f}B")
-    print(f"   Trainable params: {trainable / 1e9:.2f}B (100%)")
 
     return model, tokenizer
 
@@ -83,24 +90,36 @@ def train(args):
     epochs = args.epochs or EPOCHS
     lr = args.lr or LEARNING_RATE
     batch_size = args.batch_size or BATCH_SIZE
+    lora_rank = args.lora_rank or LORA_RANK
+    lora_alpha = (args.lora_rank * 2) if args.lora_rank else LORA_ALPHA
     output_dir = args.output_dir or OUTPUT_DIR
     data_dir = args.data_dir or DATA_DIR
     max_seq = args.max_seq_length or MAX_SEQ_LENGTH
 
-    # 1. Load model
     model, tokenizer = load_model_and_tokenizer()
 
-    # 2. Enable gradient checkpointing
+    model = prepare_model_for_kbit_training(model)
     model.gradient_checkpointing_enable()
 
-    # 3. Load dataset
+    peft_config = LoraConfig(
+        r=lora_rank,
+        lora_alpha=lora_alpha,
+        lora_dropout=LORA_DROPOUT,
+        bias="none",
+        task_type="CAUSAL_LM",
+        target_modules=TARGET_MODULES,
+    )
+    model = get_peft_model(model, peft_config)
+
+    print("\n📊 Trainable parameters:")
+    model.print_trainable_parameters()
+
     dataset = load_dataset("json", data_files={
         "train": f"{data_dir}/train.jsonl",
         "eval": f"{data_dir}/eval.jsonl",
     })
-    print(f"\n📂 Train: {len(dataset['train'])} | Eval: {len(dataset['eval'])}")
+    print(f"📂 Train: {len(dataset['train'])} | Eval: {len(dataset['eval'])}")
 
-    # 4. Training config
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=epochs,
@@ -118,14 +137,13 @@ def train(args):
         eval_steps=500,
         save_total_limit=3,
         bf16=True,
-        optim="adamw_torch",
+        optim="paged_adamw_8bit",
         gradient_checkpointing=True,
-        max_grad_norm=1.0,
+        max_grad_norm=0.3,
         report_to="wandb",
-        run_name="qwen-sealion-8b-sft",
+        run_name="qwen-sealion-8b-qlora",
     )
 
-    # 5. Create trainer
     trainer = SFTTrainer(
         model=model,
         args=training_args,
@@ -137,20 +155,19 @@ def train(args):
         packing=True,
     )
 
-    print(f"\n🚀 Full SFT — Qwen-SEA-LION-v4-8B-VL")
+    print(f"\n🚀 QLoRA Training — Qwen-SEA-LION-v4-8B-VL")
     print(f"   Epochs:          {epochs}")
     print(f"   Batch size:      {batch_size}")
     print(f"   Grad accum:      {GRADIENT_ACCUMULATION}")
     print(f"   Effective batch: {batch_size * GRADIENT_ACCUMULATION}")
     print(f"   Learning rate:   {lr}")
+    print(f"   LoRA rank:       {lora_rank} (alpha: {lora_alpha})")
     print(f"   Max seq length:  {max_seq}")
-    print(f"   Output:          {output_dir}")
     print(f"   WandB:           ✅ enabled")
     print()
 
     trainer.train()
 
-    # 6. Save
     final_path = f"{output_dir}/final"
     trainer.save_model(final_path)
     tokenizer.save_pretrained(final_path)
@@ -158,10 +175,11 @@ def train(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Full SFT for Qwen-SEA-LION-v4-8B-VL")
+    parser = argparse.ArgumentParser(description="QLoRA fine-tune Qwen-SEA-LION-v4-8B-VL")
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--lr", type=float)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--lora-rank", type=int)
     parser.add_argument("--max-seq-length", type=int)
     parser.add_argument("--data-dir", type=str)
     parser.add_argument("--output-dir", type=str)

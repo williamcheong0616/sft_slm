@@ -1,27 +1,34 @@
 #!/usr/bin/env python3
 """
-Inference with fine-tuned Llama-SEA-LION-v3.5-8B-R (full SFT).
+Inference with QLoRA fine-tuned Llama-SEA-LION-v3.5-8B-R.
 
 Usage:
   python llama/inference.py --prompt "Macam mana AI boleh bantu cikgu?"
   python llama/inference.py --interactive
-  python llama/inference.py --model-path ./output/llama-8b/final --prompt "Hello"
 """
 
 import argparse
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import PeftModel
 
-# Path to the fine-tuned model (full SFT saves the complete model)
-MODEL_PATH = "./output/llama-8b/final"
+BASE_MODEL_ID = "aisingapore/Llama-SEA-LION-v3.5-8B-R"
+ADAPTER_PATH = "./output/llama-8b/final"
 
 
-def load_model(model_path):
-    print(f"🔄 Loading fine-tuned model: {model_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=torch.bfloat16, device_map="auto",
+def load_model(adapter_path, base_model_id):
+    print(f"🔄 Loading base model: {base_model_id}")
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
     )
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_id, quantization_config=bnb_config, device_map="auto",
+    )
+    tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+
+    print(f"🔗 Loading adapter: {adapter_path}")
+    model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
 
     if tokenizer.pad_token is None:
@@ -36,10 +43,7 @@ def generate(model, tokenizer, instruction, input_ctx="",
     messages = [{"role": "user", "content": instruction + (
         f"\n\n{input_ctx}" if input_ctx else ""
     )}]
-
-    prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True,
-    )
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
@@ -75,12 +79,13 @@ def main():
     parser.add_argument("--prompt", "-p", type=str)
     parser.add_argument("--input", "-i", type=str, default="")
     parser.add_argument("--interactive", action="store_true")
-    parser.add_argument("--model-path", default=MODEL_PATH)
+    parser.add_argument("--adapter-path", default=ADAPTER_PATH)
+    parser.add_argument("--base-model", default=BASE_MODEL_ID)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
     args = parser.parse_args()
 
-    model, tokenizer = load_model(args.model_path)
+    model, tokenizer = load_model(args.adapter_path, args.base_model)
 
     if args.interactive:
         interactive(model, tokenizer)
