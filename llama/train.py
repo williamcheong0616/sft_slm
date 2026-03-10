@@ -144,7 +144,7 @@ def train(args):
         report_to="wandb",
         run_name="llama-sealion-8b-qlora",
         # SFT-specific params (now in SFTConfig)
-        max_seq_length=max_seq,
+        max_length=max_seq,
         packing=True,
     )
 

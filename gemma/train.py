@@ -141,7 +141,7 @@ def train(args):
         max_grad_norm=0.3,
         report_to="wandb",
         run_name="gemma-sealion-4b-qlora",
-        max_seq_length=max_seq,
+        max_length=max_seq,
         packing=True,
     )
 
