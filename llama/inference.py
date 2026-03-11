@@ -43,7 +43,7 @@ def generate(model, tokenizer, instruction, input_ctx="",
     messages = [{"role": "user", "content": instruction + (
         f"\n\n{input_ctx}" if input_ctx else ""
     )}]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, thinking_mode="off")
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():

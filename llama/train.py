@@ -77,7 +77,7 @@ def make_formatting_func(tokenizer):
             messages.append({"role": "assistant", "content": example["output"]})
 
         return tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=False,
+            messages, tokenize=False, add_generation_prompt=False, thinking_mode="off"
         )
 
     return format_example
