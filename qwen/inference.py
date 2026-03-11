@@ -49,7 +49,7 @@ def generate(model, tokenizer, instruction, input_ctx="",
     with torch.no_grad():
         outputs = model.generate(
             **inputs, max_new_tokens=max_new_tokens,
-            temperature=temperature, top_p=0.9,
+            temperature=max(1e-5, temperature), top_p=0.9, top_k=50,
             repetition_penalty=1.1, do_sample=True,
         )
     return tokenizer.decode(
