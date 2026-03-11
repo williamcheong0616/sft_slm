@@ -20,7 +20,7 @@ def load_model(adapter_path, base_model_id):
     print(f"🔄 Loading base model: {base_model_id}")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True, bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True,
     )
     model = Gemma3ForConditionalGeneration.from_pretrained(
         base_model_id, quantization_config=bnb_config, device_map="auto",
@@ -50,7 +50,7 @@ def generate(model, tokenizer, instruction, input_ctx="",
         outputs = model.generate(
             **inputs, max_new_tokens=max_new_tokens,
             temperature=max(1e-5, temperature), top_p=0.9, top_k=50,
-            repetition_penalty=1.1, do_sample=True,
+            do_sample=True,
         )
     return tokenizer.decode(
         outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
