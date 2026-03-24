@@ -35,3 +35,9 @@ wandb/
 # Jupyter
 .ipynb_checkpoints/
 curated_data.jsonl
+gmni_rslt.html
+advanced_curated_data_analysis.ipynb
+.gitignore
+analyze_data.py
+build_ipynb.py
+pipeline_6_questions.jsonl
