@@ -41,3 +41,9 @@ advanced_curated_data_analysis.ipynb
 analyze_data.py
 build_ipynb.py
 pipeline_6_questions.jsonl
+long_test_prompts.jsonl
+.gitignore
+test.json
+.gitignore
+personalized_prompts.jsonl
+random_prompts.jsonl
