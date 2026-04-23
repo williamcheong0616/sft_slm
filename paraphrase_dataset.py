@@ -20,7 +20,7 @@ except ImportError:
 
 # ─────────────────────────── CONFIG ───────────────────────────
 OLLAMA_URL      = "http://localhost:11434/api/generate"
-MODEL           = "gemma3:4b"          # adjust if your server tag differs
+MODEL           = "gemma4:e4b"          # adjust if your server tag differs
 BATCH_SIZE      = 10                   # conversations processed per batch
 DELAY_BETWEEN   = 1.0                  # seconds to sleep between API calls
 TIMEOUT         = 120                  # seconds per request
@@ -116,11 +116,14 @@ def process_record(record: dict, model: str, ollama_url: str, delay: float) -> d
     for turn in record.get("conversations", []):
         role    = turn["role"]
         content = turn["content"]
-        print(f"      → paraphrasing [{role}] …", end=" ", flush=True)
-        new_content = paraphrase_turn(role, content, model, ollama_url)
-        print("done")
-        new_convos.append({"role": role, "content": new_content})
-        time.sleep(delay)                  # gentle pacing between turns
+        if role == "assistant":
+            print(f"      → paraphrasing [assistant] …", end=" ", flush=True)
+            content = paraphrase_turn(role, content, model, ollama_url)
+            print("done")
+            time.sleep(delay)              # pace only after actual API calls
+        else:
+            print(f"      → keeping [user] as-is")
+        new_convos.append({"role": role, "content": content})
 
     return {"id": record["id"], "conversations": new_convos}
 
