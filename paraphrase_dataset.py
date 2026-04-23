@@ -74,10 +74,10 @@ def load_existing_output(output_path: str) -> dict:
     return existing
 
 
-def call_ollama(prompt: str) -> str | None:
+def call_ollama(prompt: str, model: str, ollama_url: str) -> str | None:
     """Call Ollama generate endpoint. Returns model text or None on failure."""
     payload = {
-        "model": MODEL,
+        "model": model,
         "prompt": prompt,
         "system": SYSTEM_PROMPT,
         "stream": False,
@@ -88,7 +88,7 @@ def call_ollama(prompt: str) -> str | None:
         }
     }
     try:
-        resp = requests.post(OLLAMA_URL, json=payload, timeout=TIMEOUT)
+        resp = requests.post(ollama_url, json=payload, timeout=TIMEOUT)
         resp.raise_for_status()
         return resp.json().get("response", "").strip()
     except requests.exceptions.Timeout:
@@ -102,25 +102,25 @@ def call_ollama(prompt: str) -> str | None:
         return None
 
 
-def paraphrase_turn(role: str, content: str) -> str:
+def paraphrase_turn(role: str, content: str, model: str, ollama_url: str) -> str:
     """Paraphrase a single conversation turn, keeping the role label."""
     label = "User" if role == "user" else "Assistant"
     prompt = f"[{label}]: {content}\n\nParaphrase teks [{label}] di atas:"
-    result = call_ollama(prompt)
+    result = call_ollama(prompt, model, ollama_url)
     return result if result else content   # fall back to original on failure
 
 
-def process_record(record: dict) -> dict:
+def process_record(record: dict, model: str, ollama_url: str, delay: float) -> dict:
     """Paraphrase all turns in one JSONL record."""
     new_convos = []
     for turn in record.get("conversations", []):
         role    = turn["role"]
         content = turn["content"]
         print(f"      → paraphrasing [{role}] …", end=" ", flush=True)
-        new_content = paraphrase_turn(role, content)
+        new_content = paraphrase_turn(role, content, model, ollama_url)
         print("done")
         new_convos.append({"role": role, "content": new_content})
-        time.sleep(DELAY_BETWEEN)          # gentle pacing between turns
+        time.sleep(delay)                  # gentle pacing between turns
 
     return {"id": record["id"], "conversations": new_convos}
 
@@ -141,11 +141,10 @@ def main():
     parser.add_argument("--ollama-url",  default=OLLAMA_URL,   help="Ollama API base URL")
     args = parser.parse_args()
 
-    # Apply CLI overrides to globals
-    global MODEL, DELAY_BETWEEN, OLLAMA_URL
-    MODEL           = args.model
-    DELAY_BETWEEN   = args.delay
-    OLLAMA_URL      = args.ollama_url
+    # Resolve config from parsed args
+    model      = args.model
+    delay      = args.delay
+    ollama_url = args.ollama_url
 
     # ── Load state ──────────────────────────────────────────
     done_ids = load_progress()
@@ -155,7 +154,7 @@ def main():
     print(f"=== Paraphrase Dataset ===")
     print(f"  Input  : {args.input}")
     print(f"  Output : {args.output}")
-    print(f"  Model  : {MODEL}")
+    print(f"  Model  : {model}")
     print(f"  Already done: {len(done_ids)} records")
 
     # ── Read input ──────────────────────────────────────────
@@ -191,7 +190,7 @@ def main():
             print(f"[{i}/{len(records)}] Processing id={rec_id} …")
 
             try:
-                new_record = process_record(record)
+                new_record = process_record(record, model, ollama_url, delay)
                 out_f.write(json.dumps(new_record, ensure_ascii=False) + "\n")
                 out_f.flush()
                 done_ids.add(rec_id)
