@@ -131,10 +131,18 @@ def child_train(child_args):
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import (
         AutoModelForCausalLM, 
-        AutoModelForVision2Seq, 
         AutoTokenizer, 
         BitsAndBytesConfig
     )
+    # Flexible loading for VL models across different transformers versions
+    try:
+        from transformers import AutoModelForVision2Seq as AutoVL
+    except ImportError:
+        try:
+            from transformers import AutoModelForImageTextToText as AutoVL
+        except ImportError:
+            from transformers import AutoModel as AutoVL
+
     from trl import SFTConfig, SFTTrainer
 
     model_key  = child_args.child_model_key
@@ -183,7 +191,7 @@ def child_train(child_args):
     
     loader_name = cfg.get("loader_class", "AutoModelForCausalLM")
     if loader_name == "AutoModelForVision2Seq":
-        loader_cls = AutoModelForVision2Seq
+        loader_cls = AutoVL
     else:
         loader_cls = AutoModelForCausalLM
 
