@@ -65,6 +65,7 @@ MODEL_CONFIGS = {
         "grad_accum":      4,   # effective batch = 16
         "learning_rate":   2e-4,
         "run_name_prefix": "gemma-sealion-4b-qlora",
+        "loader_class":    "AutoModelForCausalLM",
     },
     "llama": {
         "model_id":        "aisingapore/Llama-SEA-LION-v3.5-8B-R",
@@ -73,6 +74,7 @@ MODEL_CONFIGS = {
         "grad_accum":      8,   # effective batch = 16
         "learning_rate":   2e-4,
         "run_name_prefix": "llama-sealion-8b-qlora",
+        "loader_class":    "AutoModelForCausalLM",
     },
     "qwen": {
         "model_id":        "aisingapore/Qwen-SEA-LION-v4-8B-VL",
@@ -81,6 +83,7 @@ MODEL_CONFIGS = {
         "grad_accum":      8,   # effective batch = 16
         "learning_rate":   2e-4,
         "run_name_prefix": "qwen-sealion-8b-qlora",
+        "loader_class":    "AutoModelForVision2Seq",
     },
 }
 
@@ -126,7 +129,12 @@ def child_train(child_args):
     import torch
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import (
+        AutoModelForCausalLM, 
+        AutoModelForVision2Seq, 
+        AutoTokenizer, 
+        BitsAndBytesConfig
+    )
     from trl import SFTConfig, SFTTrainer
 
     model_key  = child_args.child_model_key
@@ -172,12 +180,27 @@ def child_train(child_args):
     )
 
     print(f"🔄  Loading model: {cfg['model_id']} (4-bit QLoRA, text-only)")
-    model = AutoModelForCausalLM.from_pretrained(
+    
+    loader_name = cfg.get("loader_class", "AutoModelForCausalLM")
+    if loader_name == "AutoModelForVision2Seq":
+        loader_cls = AutoModelForVision2Seq
+    else:
+        loader_cls = AutoModelForCausalLM
+
+    model = loader_cls.from_pretrained(
         cfg["model_id"],
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
     )
+
+    # ── Drop ViT for Qwen to save VRAM ────────────────────────────────────────
+    if model_key == "qwen" and hasattr(model, "visual"):
+        print("✂️  Dropping Visual Transformer (ViT) to save VRAM...")
+        # Deleting the visual tower saves significant memory as requested
+        del model.visual
+        torch.cuda.empty_cache()
+
     tokenizer = AutoTokenizer.from_pretrained(cfg["model_id"], trust_remote_code=True)
 
     if tokenizer.pad_token is None:
