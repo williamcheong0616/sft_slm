@@ -20,7 +20,7 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 
 # =============================================================================
 # DEFAULTS
@@ -142,7 +142,16 @@ def train(args):
         report_to="wandb",
         run_name="gemma-sealion-4b-qlora",
         max_length=max_seq,
-        packing=True,
+        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
+    )
+
+    # Compute loss on assistant tokens only.
+    # Gemma 3 chat template wraps the model turn as: <start_of_turn>model\n ... <end_of_turn>
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template="<start_of_turn>model\n",
+        instruction_template="<start_of_turn>user\n",
+        tokenizer=tokenizer,
+        mlm=False,
     )
 
     trainer = SFTTrainer(
@@ -152,6 +161,7 @@ def train(args):
         eval_dataset=dataset["eval"],
         processing_class=tokenizer,
         formatting_func=make_formatting_func(tokenizer),
+        data_collator=collator,
     )
 
     print(f"\n🚀 QLoRA Training — Gemma-SEA-LION-v4-4B-VL")

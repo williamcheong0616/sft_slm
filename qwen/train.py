@@ -20,7 +20,7 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 
 # =============================================================================
 # DEFAULTS
@@ -142,7 +142,16 @@ def train(args):
         report_to="wandb",
         run_name="qwen-sealion-8b-qlora",
         max_length=max_seq,
-        packing=True,
+        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
+    )
+
+    # Loss on assistant tokens only.
+    # Qwen 3 chat template wraps the assistant turn as: <|im_start|>assistant\n ... <|im_end|>
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template="<|im_start|>assistant\n",
+        instruction_template="<|im_start|>user\n",
+        tokenizer=tokenizer,
+        mlm=False,
     )
 
     trainer = SFTTrainer(
@@ -152,6 +161,7 @@ def train(args):
         eval_dataset=dataset["eval"],
         processing_class=tokenizer,
         formatting_func=make_formatting_func(tokenizer),
+        data_collator=collator,
     )
 
     print(f"\n🚀 QLoRA Training — Qwen-SEA-LION-v4-8B-VL")

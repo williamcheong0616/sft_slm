@@ -20,7 +20,7 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 
 # =============================================================================
 # DEFAULTS
@@ -145,10 +145,19 @@ def train(args):
         run_name="llama-sealion-8b-qlora",
         # SFT-specific params (now in SFTConfig)
         max_length=max_seq,
-        packing=True,
+        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
     )
 
-    # 5. Create trainer
+    # 5. Create trainer — loss on assistant tokens only.
+    # Llama 3.1 chat template wraps the assistant turn as:
+    # <|start_header_id|>assistant<|end_header_id|>\n\n ... <|eot_id|>
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template="<|start_header_id|>assistant<|end_header_id|>\n\n",
+        instruction_template="<|start_header_id|>user<|end_header_id|>\n\n",
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
     trainer = SFTTrainer(
         model=model,
         args=sft_config,
@@ -156,6 +165,7 @@ def train(args):
         eval_dataset=dataset["eval"],
         processing_class=tokenizer,
         formatting_func=make_formatting_func(tokenizer),
+        data_collator=collator,
     )
 
     print(f"\n🚀 QLoRA Training — Llama-SEA-LION-v3.5-8B-R")

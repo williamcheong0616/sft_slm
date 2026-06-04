@@ -143,7 +143,7 @@ def child_train(child_args):
         except ImportError:
             from transformers import AutoModel as AutoVL
 
-    from trl import SFTConfig, SFTTrainer
+    from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
 
     model_key  = child_args.child_model_key
     n_rows     = child_args.child_n_rows
@@ -241,6 +241,25 @@ def child_train(child_args):
             return tok.apply_chat_template(msgs, **kw)
         return fmt
 
+    # ── Response-only collator (loss on assistant tokens only) ───────────────
+    # Template tokens that delimit the assistant turn in each model's chat format.
+    _RESPONSE_TEMPLATES = {
+        "gemma": "<start_of_turn>model\n",
+        "llama": "<|start_header_id|>assistant<|end_header_id|>\n\n",
+        "qwen":  "<|im_start|>assistant\n",
+    }
+    _INSTRUCTION_TEMPLATES = {
+        "gemma": "<start_of_turn>user\n",
+        "llama": "<|start_header_id|>user<|end_header_id|>\n\n",
+        "qwen":  "<|im_start|>user\n",
+    }
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template=_RESPONSE_TEMPLATES[model_key],
+        instruction_template=_INSTRUCTION_TEMPLATES[model_key],
+        tokenizer=tokenizer,
+        mlm=False,
+    )
+
     # ── SFT config ────────────────────────────────────────────────────────────
     report_to = "none" if no_wandb else "wandb"
     run_name  = f"{cfg['run_name_prefix']}-{n_rows}rows"
@@ -268,7 +287,7 @@ def child_train(child_args):
         report_to=report_to,
         run_name=run_name,
         max_length=max_seq,
-        packing=True,
+        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
     )
 
     trainer = SFTTrainer(
@@ -278,6 +297,7 @@ def child_train(child_args):
         eval_dataset=eval_dataset,
         processing_class=tokenizer,
         formatting_func=make_fmt(tokenizer, model_key),
+        data_collator=collator,
     )
 
     print(f"\n   Epochs:          {epochs}")
