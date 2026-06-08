@@ -20,7 +20,11 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+from trl import SFTTrainer, SFTConfig
+try:
+    from trl import DataCollatorForCompletionOnlyLM
+except ImportError:
+    from trl.trainer.utils import DataCollatorForCompletionOnlyLM
 
 # =============================================================================
 # DEFAULTS

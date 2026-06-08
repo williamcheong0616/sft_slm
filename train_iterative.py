@@ -149,7 +149,11 @@ def child_train(child_args):
         except ImportError:
             from transformers import AutoModel as AutoVL
 
-    from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
+    from trl import SFTConfig, SFTTrainer
+    try:
+        from trl import DataCollatorForCompletionOnlyLM
+    except ImportError:
+        from trl.trainer.utils import DataCollatorForCompletionOnlyLM
 
     model_key  = child_args.child_model_key
     n_rows     = child_args.child_n_rows
