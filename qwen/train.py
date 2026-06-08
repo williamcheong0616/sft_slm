@@ -21,15 +21,32 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
-try:
-    from trl import train_on_responses_only as _train_on_responses_only
-    _USE_TRAIN_ON_RESPONSES_ONLY = True
-except ImportError:
-    try:
-        from trl import DataCollatorForCompletionOnlyLM
-    except ImportError:
-        from trl.trainer.utils import DataCollatorForCompletionOnlyLM
-    _USE_TRAIN_ON_RESPONSES_ONLY = False
+import torch
+
+class _CompletionOnlyCollator:
+    """Masks instruction tokens so loss is computed on completions only."""
+    def __init__(self, response_template, tokenizer, instruction_template=None):
+        self.tokenizer = tokenizer
+        self.pad_id    = tokenizer.pad_token_id or 0
+        self.resp_ids  = tokenizer.encode(response_template, add_special_tokens=False)
+
+    def __call__(self, features):
+        seqs    = [f["input_ids"].tolist() if hasattr(f["input_ids"], "tolist") else list(f["input_ids"]) for f in features]
+        max_len = max(len(s) for s in seqs)
+        padded  = [s + [self.pad_id] * (max_len - len(s)) for s in seqs]
+        masks   = [[1] * len(s) + [0] * (max_len - len(s)) for s in seqs]
+        input_ids      = torch.tensor(padded, dtype=torch.long)
+        attention_mask = torch.tensor(masks,  dtype=torch.long)
+        labels         = input_ids.clone()
+        for i, seq in enumerate(padded):
+            resp_start = None
+            for j in range(len(seq) - len(self.resp_ids), -1, -1):
+                if seq[j : j + len(self.resp_ids)] == self.resp_ids:
+                    resp_start = j + len(self.resp_ids)
+                    break
+            labels[i, : (resp_start if resp_start is not None else max_len)] = -100
+        labels[input_ids == self.pad_id] = -100
+        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
 # =============================================================================
 # DEFAULTS
@@ -154,36 +171,20 @@ def train(args):
         packing=False,
     )
 
-    if _USE_TRAIN_ON_RESPONSES_ONLY:
-        trainer = SFTTrainer(
-            model=model,
-            args=sft_config,
-            train_dataset=dataset["train"],
-            eval_dataset=dataset["eval"],
-            processing_class=tokenizer,
-            formatting_func=make_formatting_func(tokenizer),
-        )
-        trainer = _train_on_responses_only(
-            trainer,
-            instruction_template="<|im_start|>user\n",
-            response_template="<|im_start|>assistant\n",
-        )
-    else:
-        collator = DataCollatorForCompletionOnlyLM(
-            response_template="<|im_start|>assistant\n",
-            instruction_template="<|im_start|>user\n",
-            tokenizer=tokenizer,
-            mlm=False,
-        )
-        trainer = SFTTrainer(
-            model=model,
-            args=sft_config,
-            train_dataset=dataset["train"],
-            eval_dataset=dataset["eval"],
-            processing_class=tokenizer,
-            formatting_func=make_formatting_func(tokenizer),
-            data_collator=collator,
-        )
+    collator = _CompletionOnlyCollator(
+        response_template="<|im_start|>assistant\n",
+        instruction_template="<|im_start|>user\n",
+        tokenizer=tokenizer,
+    )
+    trainer = SFTTrainer(
+        model=model,
+        args=sft_config,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["eval"],
+        processing_class=tokenizer,
+        formatting_func=make_formatting_func(tokenizer),
+        data_collator=collator,
+    )
 
     print(f"\n🚀 QLoRA Training — Qwen-SEA-LION-v4-8B-VL")
     print(f"   Epochs:          {epochs}")
