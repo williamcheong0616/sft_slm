@@ -151,9 +151,14 @@ def child_train(child_args):
 
     from trl import SFTConfig, SFTTrainer
     try:
-        from trl import DataCollatorForCompletionOnlyLM
+        from trl import train_on_responses_only
+        _USE_TRAIN_ON_RESPONSES_ONLY = True
     except ImportError:
-        from trl.trainer.utils import DataCollatorForCompletionOnlyLM
+        try:
+            from trl import DataCollatorForCompletionOnlyLM
+        except ImportError:
+            from trl.trainer.utils import DataCollatorForCompletionOnlyLM
+        _USE_TRAIN_ON_RESPONSES_ONLY = False
 
     model_key  = child_args.child_model_key
     n_rows     = child_args.child_n_rows
@@ -263,13 +268,6 @@ def child_train(child_args):
         "llama": "<|start_header_id|>user<|end_header_id|>\n\n",
         "qwen":  "<|im_start|>user\n",
     }
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template=_RESPONSE_TEMPLATES[model_key],
-        instruction_template=_INSTRUCTION_TEMPLATES[model_key],
-        tokenizer=tokenizer,
-        mlm=False,
-    )
-
     # ── SFT config ────────────────────────────────────────────────────────────
     report_to = "none" if no_wandb else "wandb"
     run_name  = f"{cfg['run_name_prefix']}-{n_rows}rows"
@@ -297,18 +295,39 @@ def child_train(child_args):
         report_to=report_to,
         run_name=run_name,
         max_length=max_seq,
-        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
+        packing=False,
     )
 
-    trainer = SFTTrainer(
-        model=model,
-        args=sft_config,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        processing_class=tokenizer,
-        formatting_func=make_fmt(tokenizer, model_key),
-        data_collator=collator,
-    )
+    if _USE_TRAIN_ON_RESPONSES_ONLY:
+        trainer = SFTTrainer(
+            model=model,
+            args=sft_config,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            processing_class=tokenizer,
+            formatting_func=make_fmt(tokenizer, model_key),
+        )
+        trainer = train_on_responses_only(
+            trainer,
+            instruction_template=_INSTRUCTION_TEMPLATES[model_key],
+            response_template=_RESPONSE_TEMPLATES[model_key],
+        )
+    else:
+        collator = DataCollatorForCompletionOnlyLM(
+            response_template=_RESPONSE_TEMPLATES[model_key],
+            instruction_template=_INSTRUCTION_TEMPLATES[model_key],
+            tokenizer=tokenizer,
+            mlm=False,
+        )
+        trainer = SFTTrainer(
+            model=model,
+            args=sft_config,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            processing_class=tokenizer,
+            formatting_func=make_fmt(tokenizer, model_key),
+            data_collator=collator,
+        )
 
     print(f"\n   Epochs:          {epochs}")
     print(f"   Batch size:      {cfg['batch_size']}")

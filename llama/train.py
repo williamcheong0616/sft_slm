@@ -22,9 +22,14 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 try:
-    from trl import DataCollatorForCompletionOnlyLM
+    from trl import train_on_responses_only as _train_on_responses_only
+    _USE_TRAIN_ON_RESPONSES_ONLY = True
 except ImportError:
-    from trl.trainer.utils import DataCollatorForCompletionOnlyLM
+    try:
+        from trl import DataCollatorForCompletionOnlyLM
+    except ImportError:
+        from trl.trainer.utils import DataCollatorForCompletionOnlyLM
+    _USE_TRAIN_ON_RESPONSES_ONLY = False
 
 # =============================================================================
 # DEFAULTS
@@ -149,28 +154,39 @@ def train(args):
         run_name="llama-sealion-8b-qlora",
         # SFT-specific params (now in SFTConfig)
         max_length=max_seq,
-        packing=False,  # Must be False when using DataCollatorForCompletionOnlyLM
+        packing=False,
     )
 
-    # 5. Create trainer — loss on assistant tokens only.
-    # Llama 3.1 chat template wraps the assistant turn as:
-    # <|start_header_id|>assistant<|end_header_id|>\n\n ... <|eot_id|>
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template="<|start_header_id|>assistant<|end_header_id|>\n\n",
-        instruction_template="<|start_header_id|>user<|end_header_id|>\n\n",
-        tokenizer=tokenizer,
-        mlm=False,
-    )
-
-    trainer = SFTTrainer(
-        model=model,
-        args=sft_config,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["eval"],
-        processing_class=tokenizer,
-        formatting_func=make_formatting_func(tokenizer),
-        data_collator=collator,
-    )
+    if _USE_TRAIN_ON_RESPONSES_ONLY:
+        trainer = SFTTrainer(
+            model=model,
+            args=sft_config,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset["eval"],
+            processing_class=tokenizer,
+            formatting_func=make_formatting_func(tokenizer),
+        )
+        trainer = _train_on_responses_only(
+            trainer,
+            instruction_template="<|start_header_id|>user<|end_header_id|>\n\n",
+            response_template="<|start_header_id|>assistant<|end_header_id|>\n\n",
+        )
+    else:
+        collator = DataCollatorForCompletionOnlyLM(
+            response_template="<|start_header_id|>assistant<|end_header_id|>\n\n",
+            instruction_template="<|start_header_id|>user<|end_header_id|>\n\n",
+            tokenizer=tokenizer,
+            mlm=False,
+        )
+        trainer = SFTTrainer(
+            model=model,
+            args=sft_config,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset["eval"],
+            processing_class=tokenizer,
+            formatting_func=make_formatting_func(tokenizer),
+            data_collator=collator,
+        )
 
     print(f"\n🚀 QLoRA Training — Llama-SEA-LION-v3.5-8B-R")
     print(f"   Epochs:          {epochs}")
