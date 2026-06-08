@@ -45,9 +45,9 @@ from datetime import datetime
 # ──────────────────────────────────────────────────────────────────────────────
 DATA_FILE        = "./curated_data.jsonl"
 OUTPUT_BASE      = "./output"
-MAX_SEQ_LENGTH   = 512
-EPOCHS           = 1
-LORA_RANK        = 16
+MAX_SEQ_LENGTH   = 512          # overridden per-model below
+EPOCHS           = 2
+LORA_RANK        = 32
 LORA_DROPOUT     = 0.05
 ITERATION_STEP   = 5_000
 ITERATION_START  = 5_000
@@ -63,7 +63,9 @@ MODEL_CONFIGS = {
         "short_name":      "gemma-4b",
         "batch_size":      4,
         "grad_accum":      4,   # effective batch = 16
-        "learning_rate":   2e-4,
+        "learning_rate":   1e-4,
+        "max_seq":         1024,
+        "epochs":          3,
         "run_name_prefix": "gemma-sealion-4b-qlora",
         "loader_class":    "AutoModelForCausalLM",
     },
@@ -72,7 +74,9 @@ MODEL_CONFIGS = {
         "short_name":      "llama-8b",
         "batch_size":      2,
         "grad_accum":      8,   # effective batch = 16
-        "learning_rate":   2e-4,
+        "learning_rate":   1e-4,
+        "max_seq":         768,
+        "epochs":          2,
         "run_name_prefix": "llama-sealion-8b-qlora",
         "loader_class":    "AutoModelForCausalLM",
     },
@@ -81,7 +85,9 @@ MODEL_CONFIGS = {
         "short_name":      "qwen-8b",
         "batch_size":      2,
         "grad_accum":      8,   # effective batch = 16
-        "learning_rate":   2e-4,
+        "learning_rate":   1e-4,
+        "max_seq":         768,
+        "epochs":          2,
         "run_name_prefix": "qwen-sealion-8b-qlora",
         "loader_class":    "AutoModelForVision2Seq",
     },
@@ -152,7 +158,7 @@ def child_train(child_args):
     eval_start = child_args.child_eval_start   # index where eval slice begins
     epochs     = child_args.child_epochs
     lora_rank  = child_args.child_lora_rank
-    lora_alpha = lora_rank * 2
+    lora_alpha = lora_rank          # 1:1 ratio stabilises training
     max_seq    = child_args.child_max_seq
     no_wandb   = child_args.child_no_wandb
     cfg        = MODEL_CONFIGS[model_key]
@@ -409,9 +415,9 @@ def orchestrate(args):
                 "--child-run-dir",    run_dir,
                 "--child-data-file",  data_file,
                 "--child-eval-start", str(eval_start),
-                "--child-epochs",     str(epochs),
+                "--child-epochs",     str(cfg.get("epochs", epochs)),
                 "--child-lora-rank",  str(lora_rank),
-                "--child-max-seq",    str(max_seq),
+                "--child-max-seq",    str(cfg.get("max_seq", max_seq)),
             ]
             if args.no_wandb:
                 child_cmd.append("--child-no-wandb")

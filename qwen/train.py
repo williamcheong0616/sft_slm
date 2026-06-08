@@ -28,13 +28,13 @@ from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 MODEL_ID = "aisingapore/Qwen-SEA-LION-v4-8B-VL"
 OUTPUT_DIR = "./output/qwen-8b"
 DATA_DIR = "./data"
-MAX_SEQ_LENGTH = 512
-EPOCHS = 1
+MAX_SEQ_LENGTH = 768
+EPOCHS = 2
 BATCH_SIZE = 2
 GRADIENT_ACCUMULATION = 8     # Effective batch = 2 * 8 = 16
-LEARNING_RATE = 2e-4
-LORA_RANK = 16
-LORA_ALPHA = 32
+LEARNING_RATE = 1e-4
+LORA_RANK = 32
+LORA_ALPHA = 32               # ratio 1:1 stabilises training vs aggressive 2:1
 LORA_DROPOUT = 0.05
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 

@@ -28,13 +28,13 @@ from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 MODEL_ID = "aisingapore/Gemma-SEA-LION-v4-4B-VL"
 OUTPUT_DIR = "./output/gemma-4b"
 DATA_DIR = "./data"
-MAX_SEQ_LENGTH = 512
-EPOCHS = 1
+MAX_SEQ_LENGTH = 1024
+EPOCHS = 3
 BATCH_SIZE = 4
 GRADIENT_ACCUMULATION = 4     # Effective batch = 4 * 4 = 16
-LEARNING_RATE = 2e-4
-LORA_RANK = 16
-LORA_ALPHA = 32
+LEARNING_RATE = 1e-4
+LORA_RANK = 32
+LORA_ALPHA = 32               # ratio 1:1 stabilises training vs aggressive 2:1
 LORA_DROPOUT = 0.05
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
