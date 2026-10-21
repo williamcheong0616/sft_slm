@@ -195,6 +195,7 @@ def wilcoxon_tests(df: pd.DataFrame) -> pd.DataFrame:
                 "variant_a":   a,
                 "variant_b":   b,
                 "n_questions": len(pair),
+                "n_nonzero":   int((diff != 0).sum()),   # wilcoxon drops zero differences
                 "mean_a":      round(pair[a].mean(), 3),
                 "mean_b":      round(pair[b].mean(), 3),
                 "median_diff": round(diff.median(), 3),
@@ -357,7 +358,7 @@ def main():
         print(f"  Family size (Holm): {len(df_wilcoxon)} tests")
         for _, r in df_wilcoxon.iterrows():
             print(f"  {r['dimension']:<15} {r['variant_a']} vs {r['variant_b']}  "
-                  f"n={r['n_questions']}  Δmedian={r['median_diff']:+.2f}  "
+                  f"n={r['n_questions']} (non-zero {r['n_nonzero']})  Δmedian={r['median_diff']:+.2f}  "
                   f"p={r['p_value']:.4f}  p_holm={r['p_holm']:.4f}")
 
     # ── 3. Per-annotator averages (check for systematic bias) ─────────────────

@@ -59,5 +59,6 @@ def test_wilcoxon_tests_smoke():
     out = hea.wilcoxon_tests(pd.DataFrame(rows))
     assert len(out) == len(hea.DIMENSIONS)
     assert (out["n_questions"] == 12).all()
+    assert (out["n_nonzero"] == 12).all()
     assert (out["p_holm"] >= out["p_value"]).all()
     assert out["significant_05"].all()
